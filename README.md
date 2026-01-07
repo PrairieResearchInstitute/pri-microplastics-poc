@@ -7,8 +7,6 @@ machine learning or proprietary software.
 The approach is fully open source, interpretable, and designed to be easy to
 explain to non–computer-vision specialists.
 
----
-
 ## Conceptual Overview
 
 The key observation behind this method is simple:
@@ -24,8 +22,6 @@ The method relies on three main ideas:
 3. Pixel-wise color distance (**Delta_E**) thresholding
 
 Each is described below.
-
----
 
 ## 1. Background Color in Lab Space
 
@@ -47,8 +43,6 @@ from color:
 Lab space is approximately perceptually uniform, meaning Euclidean distance in
 Lab space corresponds well to how different two colors appear to humans.
 
----
-
 ### How the background color is estimated
 
 Rather than hard-coding a specific mustard color, the background color is
@@ -65,8 +59,6 @@ The procedure is:
 
 The assumption is that the background occupies the largest fraction of the image.
 
----
-
 ### Why downsample the image?
 
 Downsampling is used only for background estimation and is safe because:
@@ -82,8 +74,6 @@ Downsampling:
 
 All subsequent analysis uses the full-resolution image.
 
----
-
 ## 2. ROI Mask (Region of Interest)
 
 ### Why an ROI mask is needed
@@ -97,8 +87,6 @@ Raw microscope images often include areas outside the actual sample, such as:
 Including these areas can lead to false detections.
 
 The ROI mask restricts analysis to the actual sample region.
-
----
 
 ### How the ROI mask is built
 
@@ -114,7 +102,6 @@ The result is a boolean mask:
 
 All particle detection is performed inside this mask.
 
----
 
 ## 3. Delta_E (Color Distance from Background)
 
@@ -126,7 +113,7 @@ between two colors in Lab space.
 In this script, Delta_E is computed as the Euclidean distance:
 
 
-## 4/ Example Usage
+## 4. Example Usage
 
 Below is a simple example showing how to run the particle detection script on one of the sample microscope images.
 
