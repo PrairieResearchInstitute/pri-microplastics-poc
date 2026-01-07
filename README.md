@@ -120,7 +120,8 @@ Below is a simple example showing how to run the particle detection script on on
 ```bash
 python detect_particles.py data/Sample2_010626.png \
   --deltae-threshold 5.0 \
-  --min-area 3```
+  --min-area 3
+```
 
 This command will:
 	- Read the input image `Sample2_010626.png`
