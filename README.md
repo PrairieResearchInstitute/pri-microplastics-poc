@@ -124,13 +124,13 @@ python detect_particles.py data/Sample2_010626.png \
 ```
 
 This command will:
-	- Read the input image `Sample2_010626.png`
-	- Detect pixels whose color differs from the estimated background by more than a Delta_E of 5.0
-	- Keep detected regions with an area of at least 3 pixels
-	- Write the output files to the default output directory (`out_particles/`), including:
-	  - a CSV catalog of detected particles
-	  - a binary mask image
-	  - a labeled image where each particle has a unique ID
-	  - an overlay image highlighting detected particles on top of the original image
+- Read the input image `Sample2_010626.png`
+- Detect pixels whose color differs from the estimated background by more than a Delta_E of 5.0
+- Keep detected regions with an area of at least 3 pixels
+- Write the output files to the default output directory (`out_particles/`), including:
+	 - a CSV catalog of detected particles
+	 - a binary mask image
+	 - a labeled image where each particle has a unique ID
+	 - an overlay image highlighting detected particles on top of the original image
 
 Thresholds such as `--deltae-threshold` and `--min-area` can be adjusted depending on image quality, illumination conditions, and the desired sensitivity of the detection.
