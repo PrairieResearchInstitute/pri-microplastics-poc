@@ -83,6 +83,7 @@ background is estimated and subtracted before detecting stars or galaxies.
 import argparse
 from pathlib import Path
 import time
+import xml.etree.ElementTree as ET
 
 import imageio.v3 as iio
 import numpy as np
@@ -156,6 +157,90 @@ def make_preview(image, preview_scale):
         anti_aliasing=True,
         preserve_range=True,
     )
+
+
+def find_metadata_xml(image_path):
+    """Find a sidecar metadata XML file for an image if one exists."""
+    candidates = [
+        image_path.with_name(f"{image_path.name}_metadata.xml"),
+        image_path.with_name(f"{image_path.stem}_metadata.xml"),
+    ]
+
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+
+    matches = sorted(image_path.parent.glob(f"{image_path.stem}*_metadata.xml"))
+    return matches[0] if matches else None
+
+
+def load_image_scale_metadata(image_path):
+    """
+    Load specimen-plane pixel scale from a JPEG sidecar metadata XML file.
+
+    The XML stores camera pixel size and magnification terms. We convert that
+    into specimen-plane micrometers per pixel when the required fields exist.
+    """
+    metadata_path = find_metadata_xml(image_path)
+    result = {
+        "metadata_path": metadata_path,
+        "pixel_size_um": None,
+        "scaling_unit": None,
+    }
+
+    if metadata_path is None:
+        return result
+
+    root = ET.parse(metadata_path).getroot()
+
+    values = {}
+    scaling_components = []
+
+    for elem in root.iter():
+        tag = elem.tag.split("}")[-1]
+        text = (elem.text or "").strip()
+
+        if tag == "ScalingComponent":
+            mag_text = elem.attrib.get("Magnification", "").strip()
+            if mag_text:
+                try:
+                    scaling_components.append(float(mag_text))
+                except ValueError:
+                    pass
+            continue
+
+        if text and tag not in values:
+            values[tag] = text
+
+    image_pixel_size = values.get("ImagePixelSize")
+    total_magnification = values.get("TotalMagnification") or values.get("MM.TotalMagnification")
+
+    if total_magnification is None and scaling_components:
+        total_magnification = str(np.prod(scaling_components))
+
+    if image_pixel_size and total_magnification:
+        pixel_size = float(image_pixel_size.split(",")[0])
+        magnification = float(total_magnification)
+        if magnification > 0:
+            result["pixel_size_um"] = pixel_size / magnification
+
+    result["scaling_unit"] = values.get("DefaultScalingUnit")
+    return result
+
+
+def format_output_path(path):
+    """Format an output path relative to the current working directory."""
+    try:
+        return str(path.resolve().relative_to(Path.cwd().resolve()))
+    except ValueError:
+        return str(path.resolve())
+
+
+def print_metadata_scale(pixel_size_um, enabled=True):
+    """Print the computed specimen-plane pixel scale, if available."""
+    if not enabled or pixel_size_um is None:
+        return
+    print(f"       pixel size = {pixel_size_um:.6f} um/pixel", flush=True)
 
 
 def build_valid_data_mask(gray, nodata_threshold=0.02, nodata_dilation=5):
@@ -245,6 +330,13 @@ def detect_fluorescent_particles(
     rgb = read_rgb(str(in_path))
     rgb_f = rgb.astype(np.float32) / 255.0
     print_step_timing("read image", t0, timing)
+
+    # 1b) Optional metadata sidecar.
+    t0 = now()
+    scale_metadata = load_image_scale_metadata(in_path)
+    pixel_size_um = scale_metadata["pixel_size_um"]
+    print_step_timing("read metadata XML", t0, timing)
+    print_metadata_scale(pixel_size_um, timing)
 
     # 2) Convert RGB image to grayscale.
     #
@@ -345,6 +437,11 @@ def detect_fluorescent_particles(
             "x_centroid": float(x),
             "y_centroid": float(y),
             "area_px": int(p.area),
+            "area_um2": (
+                float(p.area) * (pixel_size_um ** 2)
+                if pixel_size_um is not None
+                else np.nan
+            ),
             "equiv_diameter_px": float(p.equivalent_diameter),
             "eccentricity": float(p.eccentricity),
             "solidity": float(p.solidity),
@@ -445,20 +542,24 @@ def detect_fluorescent_particles(
     print(f"No-data dilation: {nodata_dilation} px")
     print(f"Valid pixels: {int(valid.sum())} / {valid.size}")
     print(f"Edge margin: {edge_margin} px")
+    if scale_metadata["metadata_path"] is not None:
+        print(f"Metadata XML: {scale_metadata['metadata_path'].name}")
+    if pixel_size_um is not None:
+        print(f"Pixel size: {pixel_size_um:.6f} um/pixel")
     print(f"Overlay color: {overlay_color}")
     print(f"Preview scale: {preview_scale}")
     print("Key files:")
-    print(f"  {f_catalog.name}")
-    print(f"  {f_overlay.name}")
+    print(f"  {format_output_path(f_catalog)}")
+    print(f"  {format_output_path(f_overlay)}")
 
     if write_mask:
-        print(f"  {f_mask.name}")
+        print(f"  {format_output_path(f_mask)}")
     if write_labels:
-        print(f"  {f_labels.name}")
+        print(f"  {format_output_path(f_labels)}")
     if write_residual:
-        print(f"  {f_residual.name}")
+        print(f"  {format_output_path(f_residual)}")
     if write_valid_mask:
-        print(f"  {f_valid.name}")
+        print(f"  {format_output_path(f_valid)}")
 
     print(f"Total runtime: {total:.3f} s")
 

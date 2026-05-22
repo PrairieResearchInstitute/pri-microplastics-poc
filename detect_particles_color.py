@@ -189,6 +189,7 @@ import argparse
 from pathlib import Path
 import sys
 import time
+import xml.etree.ElementTree as ET
 
 import numpy as np
 import pandas as pd
@@ -249,6 +250,90 @@ def make_preview(image: np.ndarray, preview_scale: float) -> np.ndarray:
         anti_aliasing=True,
         preserve_range=True,
     )
+
+
+def find_metadata_xml(image_path: Path) -> Path | None:
+    """Find a sidecar metadata XML file for an image if one exists."""
+    candidates = [
+        image_path.with_name(f"{image_path.name}_metadata.xml"),
+        image_path.with_name(f"{image_path.stem}_metadata.xml"),
+    ]
+
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+
+    matches = sorted(image_path.parent.glob(f"{image_path.stem}*_metadata.xml"))
+    return matches[0] if matches else None
+
+
+def load_image_scale_metadata(image_path: Path) -> dict:
+    """
+    Load specimen-plane pixel scale from a JPEG sidecar metadata XML file.
+
+    The XML stores camera pixel size and magnification terms. We convert that
+    into specimen-plane micrometers per pixel when the required fields exist.
+    """
+    metadata_path = find_metadata_xml(image_path)
+    result = {
+        "metadata_path": metadata_path,
+        "pixel_size_um": None,
+        "scaling_unit": None,
+    }
+
+    if metadata_path is None:
+        return result
+
+    root = ET.parse(metadata_path).getroot()
+
+    values = {}
+    scaling_components = []
+
+    for elem in root.iter():
+        tag = elem.tag.split("}")[-1]
+        text = (elem.text or "").strip()
+
+        if tag == "ScalingComponent":
+            mag_text = elem.attrib.get("Magnification", "").strip()
+            if mag_text:
+                try:
+                    scaling_components.append(float(mag_text))
+                except ValueError:
+                    pass
+            continue
+
+        if text and tag not in values:
+            values[tag] = text
+
+    image_pixel_size = values.get("ImagePixelSize")
+    total_magnification = values.get("TotalMagnification") or values.get("MM.TotalMagnification")
+
+    if total_magnification is None and scaling_components:
+        total_magnification = str(np.prod(scaling_components))
+
+    if image_pixel_size and total_magnification:
+        pixel_size = float(image_pixel_size.split(",")[0])
+        magnification = float(total_magnification)
+        if magnification > 0:
+            result["pixel_size_um"] = pixel_size / magnification
+
+    result["scaling_unit"] = values.get("DefaultScalingUnit")
+    return result
+
+
+def format_output_path(path: Path) -> str:
+    """Format an output path relative to the current working directory."""
+    try:
+        return str(path.resolve().relative_to(Path.cwd().resolve()))
+    except ValueError:
+        return str(path.resolve())
+
+
+def print_metadata_scale(pixel_size_um: float | None, enabled: bool = True) -> None:
+    """Print the computed specimen-plane pixel scale, if available."""
+    if not enabled or pixel_size_um is None:
+        return
+    print(f"       pixel size = {pixel_size_um:.6f} um/pixel", flush=True)
 
 
 def get_overlay_color(color_name: str) -> tuple[float, float, float]:
@@ -387,6 +472,13 @@ def main():
     rgb = read_rgb(str(in_path))
     print_step_timing("read image", t0, args.timing)
 
+    # 1b) Optional metadata sidecar.
+    t0 = now()
+    scale_metadata = load_image_scale_metadata(in_path)
+    pixel_size_um = scale_metadata["pixel_size_um"]
+    print_step_timing("read metadata XML", t0, args.timing)
+    print_metadata_scale(pixel_size_um, args.timing)
+
     rgb_f = rgb.astype(np.float32) / 255.0
 
     # 2) Background estimate
@@ -432,6 +524,11 @@ def main():
             "x_centroid": float(x),
             "y_centroid": float(y),
             "area_px": int(p.area),
+            "area_um2": (
+                float(p.area) * (pixel_size_um ** 2)
+                if pixel_size_um is not None
+                else np.nan
+            ),
             "equiv_diameter_px": float(p.equivalent_diameter),
             "eccentricity": float(p.eccentricity),
             "solidity": float(p.solidity),
@@ -480,13 +577,17 @@ def main():
     print(f"Input: {in_path}")
     print(f"Output dir: {outdir.resolve()}")
     print(f"Detections: {n_det}")
+    if scale_metadata["metadata_path"] is not None:
+        print(f"Metadata XML: {scale_metadata['metadata_path'].name}")
+    if pixel_size_um is not None:
+        print(f"Pixel size: {pixel_size_um:.6f} um/pixel")
     print(f"Overlay color: {args.overlay_color}")
     print(f"Preview scale: {args.preview_scale}")
     print("Key files:")
-    print(f"  {f_catalog.name}")
-    print(f"  {f_overlay.name}")
-    print(f"  {f_mask.name}")
-    print(f"  {f_labels.name}")
+    print(f"  {format_output_path(f_catalog)}")
+    print(f"  {format_output_path(f_overlay)}")
+    print(f"  {format_output_path(f_mask)}")
+    print(f"  {format_output_path(f_labels)}")
 
     print(f"Total runtime: {total_time:.3f} s")
 

@@ -32,6 +32,8 @@ mostly uniform background.
 3. Compute per-pixel color distance from the background.
 4. Build a region-of-interest mask for the sample area.
 5. Threshold, clean, and label detected particles.
+6. If `[input]_metadata.xml` is present, compute physical scale and add
+   `area_um2` to the catalog.
 
 ### Key options
 
@@ -49,6 +51,7 @@ mostly uniform background.
 Written to `out_color/` by default:
 
 - `[input]_particles_catalog.csv`
+  Includes `area_um2` when a sidecar metadata XML is found.
 - `[input]_particles_overlay.png`
 - `[input]_particles_mask.png`
 - `[input]_particles_labels.tif`
@@ -75,6 +78,8 @@ brighter than the local background.
 4. Subtract the background to form a residual image.
 5. Estimate noise robustly and detect bright pixels above a sigma threshold.
 6. Clean, label, and measure connected components.
+7. If `[input]_metadata.xml` is present, compute physical scale and add
+   `area_um2` to the catalog.
 
 ### Key options
 
@@ -92,6 +97,7 @@ brighter than the local background.
 Written to `out_fluorescence/` by default:
 
 - `[input]_particles_catalog.csv`
+  Includes `area_um2` when a sidecar metadata XML is found.
 - `[input]_particles_overlay.jpg`
 - `[input]_particles_mask.png` unless `--no-mask`
 - `[input]_particles_labels.tif` unless `--no-labels`

@@ -2,3 +2,4 @@ out_color/
 out_fluorescence/
 data/
 .DS_Store
+__pycache__
