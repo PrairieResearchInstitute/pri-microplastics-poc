@@ -88,9 +88,8 @@ import imageio.v3 as iio
 import numpy as np
 import pandas as pd
 
-from skimage import io, color, measure, morphology
+from skimage import io, color, measure, morphology, segmentation
 from skimage.filters import gaussian
-from skimage.color import label2rgb
 from skimage.exposure import rescale_intensity
 from skimage.transform import resize
 
@@ -191,7 +190,7 @@ def remove_edge_detections(mask, border_px):
 
 
 def get_overlay_color(color_name):
-    """Return an RGB color tuple for skimage.color.label2rgb."""
+    """Return an RGB color tuple for overlay rendering."""
     colors = {
         "red": (1, 0, 0),
         "green": (0, 1, 0),
@@ -369,12 +368,11 @@ def detect_fluorescent_particles(
     # The overlay is for visual inspection. It can be downsampled with
     # --preview-scale to make writing faster.
     t0 = now()
-    overlay = label2rgb(
+    overlay = segmentation.mark_boundaries(
+        rgb_f,
         labels,
-        image=rgb_f,
-        colors=[get_overlay_color(overlay_color)],
-        alpha=0.45,
-        bg_label=0,
+        color=get_overlay_color(overlay_color),
+        mode="thick",
     )
 
     overlay_out = make_preview(overlay, preview_scale)

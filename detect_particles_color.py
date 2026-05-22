@@ -1,11 +1,11 @@
 #!/usr/bin/env python
 """
-detect_particles.py
+detect_particles_color.py
 
 Particle detection proof-of-concept using scikit-image.
 
 Steps:
-1) Read PNG
+1) Read image
 2) Estimate background color in Lab (k-means on downsampled image)
 3) Compute per-pixel Lab distance (ΔE-like) to background
 4) Build ROI mask (mustard region, ignore edge ring)
@@ -187,6 +187,7 @@ fully open-source Python libraries.
 
 import argparse
 from pathlib import Path
+import sys
 import time
 
 import numpy as np
@@ -203,19 +204,11 @@ def now() -> float:
     return time.perf_counter()
 
 
-def add_timing(timing_dict: dict, step_name: str, start_time: float, enabled: bool) -> None:
+def print_step_timing(step_name: str, start_time: float, enabled: bool = True) -> None:
     if not enabled:
         return
-    timing_dict[step_name] = now() - start_time
-
-
-def print_timing(timing_dict: dict, total_time: float, enabled: bool) -> None:
-    if not enabled:
-        return
-    print("\nTiming breakdown:")
-    for k, v in timing_dict.items():
-        print(f"  {k:<35s} {v:8.3f} s")
-    print(f"  {'TOTAL':<35s} {total_time:8.3f} s\n")
+    dt = now() - start_time
+    print(f"[DONE] {step_name:<35s} {dt:8.3f} s", flush=True)
 
 
 def read_rgb(path: str) -> np.ndarray:
@@ -236,6 +229,42 @@ def read_rgb(path: str) -> np.ndarray:
             img = img.astype(np.uint8)
 
     return img
+
+
+def make_preview(image: np.ndarray, preview_scale: float) -> np.ndarray:
+    """
+    Downsample an image for faster writing of visual preview products.
+
+    This does not affect full-resolution detection or catalog measurements.
+    """
+    if preview_scale >= 1.0:
+        return image
+
+    ny = int(image.shape[0] * preview_scale)
+    nx = int(image.shape[1] * preview_scale)
+
+    return resize(
+        image,
+        (ny, nx),
+        anti_aliasing=True,
+        preserve_range=True,
+    )
+
+
+def get_overlay_color(color_name: str) -> tuple[float, float, float]:
+    """Return an RGB color tuple for overlay rendering."""
+    colors = {
+        "red": (1, 0, 0),
+        "green": (0, 1, 0),
+        "yellow": (1, 1, 0),
+        "cyan": (0, 1, 1),
+        "magenta": (1, 0, 1),
+    }
+
+    if color_name not in colors:
+        raise ValueError(f"Unknown overlay color: {color_name}")
+
+    return colors[color_name]
 
 
 def estimate_background_lab(rgb_u8: np.ndarray, n_clusters: int = 3, downsample_to: int = 400) -> np.ndarray:
@@ -308,8 +337,8 @@ def build_roi_mask(dE: np.ndarray, bg_tol: float = 8.0, edge_margin_px: int = 30
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("input_png", help="Input microscope image (PNG)")
-    ap.add_argument("--outdir", default="out_particles", help="Output directory")
+    ap.add_argument("input_image", help="Input microscope image")
+    ap.add_argument("--outdir", default="out_color", help="Output directory")
 
     ap.add_argument("--deltae-threshold", type=float, default=5.0,
                     help="Lab-distance from background (higher -> fewer detections)")
@@ -324,16 +353,26 @@ def main():
                     help="Minimum object area (pixels) to keep")
     ap.add_argument("--closing-radius", type=int, default=1,
                     help="Disk radius for binary closing after thresholding")
+    ap.add_argument("--overlay-color", default="red",
+                    choices=["red", "green", "yellow", "cyan", "magenta"],
+                    help="Color used for detected particles in the overlay")
+    ap.add_argument("--preview-scale", type=float, default=1.0,
+                    help="Scale factor for overlay preview images")
 
     ap.add_argument("--timing", action="store_true",
                     help="Print timing for each major step and total runtime")
 
     args = ap.parse_args()
 
-    timings = {}
+    if args.timing and hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(line_buffering=True, write_through=True)
+
+    if args.preview_scale <= 0 or args.preview_scale > 1:
+        raise ValueError("--preview-scale must be > 0 and <= 1")
+
     t_total0 = now()
 
-    in_path = Path(args.input_png)
+    in_path = Path(args.input_image)
     outdir = Path(args.outdir)
     outdir.mkdir(parents=True, exist_ok=True)
 
@@ -346,25 +385,25 @@ def main():
     # 1) Read
     t0 = now()
     rgb = read_rgb(str(in_path))
-    add_timing(timings, "read image", t0, args.timing)
+    print_step_timing("read image", t0, args.timing)
 
     rgb_f = rgb.astype(np.float32) / 255.0
 
     # 2) Background estimate
     t0 = now()
     bg_lab = estimate_background_lab(rgb, n_clusters=3, downsample_to=400)
-    add_timing(timings, "estimate background Lab", t0, args.timing)
+    print_step_timing("estimate background Lab", t0, args.timing)
 
     # 3) Compute dE
     t0 = now()
     lab_full = color.rgb2lab(rgb_f)
     dE = np.linalg.norm(lab_full - bg_lab, axis=2)
-    add_timing(timings, "compute dE", t0, args.timing)
+    print_step_timing("compute dE", t0, args.timing)
 
     # 4) ROI
     t0 = now()
     roi = build_roi_mask(dE, bg_tol=args.bg_tol, edge_margin_px=args.edge_margin)
-    add_timing(timings, "compute ROI", t0, args.timing)
+    print_step_timing("compute ROI", t0, args.timing)
 
     # 5) Mask + cleanup
     t0 = now()
@@ -374,13 +413,13 @@ def main():
         mask = morphology.binary_closing(mask, morphology.disk(args.closing_radius))
 
     mask = morphology.remove_small_objects(mask, min_size=args.min_area)
-    add_timing(timings, "compute mask", t0, args.timing)
+    print_step_timing("compute mask", t0, args.timing)
 
     # 6) Regionprops
     t0 = now()
     labels = measure.label(mask)
     props = measure.regionprops(labels, intensity_image=dE)
-    add_timing(timings, "measure regionprops", t0, args.timing)
+    print_step_timing("measure regionprops", t0, args.timing)
 
     # 7) Catalog (CSV)
     t0 = now()
@@ -409,30 +448,31 @@ def main():
         df = df.sort_values("area_px", ascending=False)
 
     df.to_csv(f_catalog, index=False)
-    add_timing(timings, "write catalog CSV", t0, args.timing)
+    print_step_timing("write catalog CSV", t0, args.timing)
 
     # 8) Write labels TIFF
     t0 = now()
     io.imsave(f_labels, labels.astype(np.uint16), check_contrast=False)
-    add_timing(timings, "write labels TIFF", t0, args.timing)
+    print_step_timing("write labels TIFF", t0, args.timing)
 
     # 9) Write mask PNG
     t0 = now()
     io.imsave(f_mask, (mask.astype(np.uint8) * 255), check_contrast=False)
-    add_timing(timings, "write mask PNG", t0, args.timing)
+    print_step_timing("write mask PNG", t0, args.timing)
 
     # 10) Write overlay PNG
     t0 = now()
     overlay = segmentation.mark_boundaries(
         rgb_f,
         labels,
-        color=(1, 0, 0),
-        mode="outer")
+        color=get_overlay_color(args.overlay_color),
+        mode="thick")
+    overlay_out = make_preview(overlay, args.preview_scale)
     io.imsave(
         f_overlay,
-        (overlay * 255).astype(np.uint8),
+        (overlay_out * 255).astype(np.uint8),
         check_contrast=False)
-    add_timing(timings, "write overlay PNG", t0, args.timing)
+    print_step_timing("write overlay PNG", t0, args.timing)
 
     total_time = now() - t_total0
 
@@ -440,13 +480,14 @@ def main():
     print(f"Input: {in_path}")
     print(f"Output dir: {outdir.resolve()}")
     print(f"Detections: {n_det}")
+    print(f"Overlay color: {args.overlay_color}")
+    print(f"Preview scale: {args.preview_scale}")
     print("Key files:")
     print(f"  {f_catalog.name}")
     print(f"  {f_overlay.name}")
     print(f"  {f_mask.name}")
     print(f"  {f_labels.name}")
 
-    print_timing(timings, total_time, args.timing)
     print(f"Total runtime: {total_time:.3f} s")
 
 
